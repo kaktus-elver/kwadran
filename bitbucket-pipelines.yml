@@ -1,0 +1,44 @@
+image: sineverba/php8xc:latest
+
+definitions:
+  caches:
+    node: node_modules
+    composer: ~/.composer/cache
+  services:
+    mysql:
+      image: mysql:5.7
+      environment:
+        MYSQL_DATABASE: "test"
+        MYSQL_ROOT_PASSWORD: "root"
+        MYSQL_USER: "user"
+        MYSQL_PASSWORD: "user_password"
+
+pipelines:
+  branches:
+    develop:
+      - step:
+          deployment: test
+          name: "Installation des dépendances"
+          caches:
+            - composer
+            - node
+          services:
+            - mysql
+          script:
+            - apt-get update && apt-get install -y unzip libicu-dev libzip-dev default-mysql-client curl gnupg
+            - curl -sL https://deb.nodesource.com/setup_18.x | bash -
+            - apt-get install -y nodejs
+            - apt-get install ssh -y
+            - apt-get install rsync -y
+            - docker-php-ext-install intl zip pdo pdo_mysql bcmath
+            - curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+            - composer install --prefer-dist --no-ansi --no-interaction --no-progress --no-scripts
+            - cp .env.deploy .env
+            - php artisan key:generate
+            - npm install
+            - npm run build
+            - vendor/bin/phpunit
+            - vendor/bin/phpstan analyse
+            - vendor/bin/phpcs
+            - rsync -zrSlh --stats --delete --exclude-from=$BITBUCKET_CLONE_DIR/.pipelinesignore $BITBUCKET_CLONE_DIR/ $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH;
+            - ssh $DEPLOY_USER@$DEPLOY_HOST "cd $DEPLOY_PATH && php artisan migrate && php artisan cache:clear && php artisan queue:restart"
